@@ -157,13 +157,10 @@ class OllamaBrain:
 
     def decide(self, agent: Agent, world: World) -> dict:
         user_msg = build_tick_context(agent, world)
-        # World state goes into system so the model receives it as first-person
-        # perception, not as a request from a "user". History stays as user/assistant
-        # pairs for past-context continuity. An empty user turn triggers the response.
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT + "\n\n---\n\n" + user_msg},
+            {"role": "system", "content": SYSTEM_PROMPT},
             *self._history,
-            {"role": "user", "content": ""},
+            {"role": "user", "content": user_msg},
         ]
         log.debug("[%s] LLM prompt:\n%s", agent.name, user_msg)
         response = _ollama_chat(

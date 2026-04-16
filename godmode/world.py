@@ -204,12 +204,62 @@ class World:
 
             # Ask target to respond — separate LLM call outside the parallel phase
             reply_dict = target.brain.respond_to_message(target, self, agent.name, message)
-            if (
+
+            if reply_dict.get("action") == "trade" and reply_dict.get("target") == agent.name:
+                # Target wants to trade in response to the message — handle inline
+                t_give = _clean_trade_items(reply_dict.get("give", []), target, self.resource_configs)
+                t_take = _clean_trade_items(reply_dict.get("take", []), None, self.resource_configs)
+
+                if t_give or t_take:
+                    a_response = agent.brain.respond_to_trade(agent, self, target.name, t_give, t_take, can_counter=False)
+                    if a_response.get("action") == "trade_accept":
+                        if _can_fulfill(target, t_give) and _can_fulfill(agent, t_take):
+                            _execute_trade(target, t_give, agent, t_take)
+                            outcome = "accepted"
+                            log.info("[%s↔%s] trade (via message) accepted: %s gives %s; %s gives %s",
+                                     target.name, agent.name, target.name, _fmt_items(t_give),
+                                     agent.name, _fmt_items(t_take))
+                        else:
+                            outcome = "failed (inventory changed)"
+                            log.info("[%s↔%s] trade (via message) accepted but inventory changed — cancelled",
+                                     target.name, agent.name)
+                    else:
+                        outcome = "rejected"
+                        log.info("[%s↔%s] trade (via message) rejected by %s",
+                                 target.name, agent.name, agent.name)
+
+                    trade_desc = f"[trade via message] give={_fmt_items(t_give)} take={_fmt_items(t_take)} — {outcome}"
+                    i_score, i_note, i_memory = agent.brain.score_interaction(agent, self, target.name, trade_desc, None)
+                    t_score, t_note, t_memory = target.brain.score_interaction(target, self, agent.name, trade_desc, None)
+
+                    update_relationship(agent, target.name, i_score, i_note, self.tick_count)
+                    update_relationship(target, agent.name, t_score, t_note, self.tick_count)
+
+                    self._last_interactions.append({
+                        "type": "trade",
+                        "initiator": target.name, "target": agent.name,
+                        "give": [{"resource": i["resource"], "qty": i["qty"]} for i in t_give],
+                        "take": [{"resource": i["resource"], "qty": i["qty"]} for i in t_take],
+                        "outcome": outcome,
+                        "initiator_score": t_score, "target_score": i_score,
+                    })
+
+                    if i_memory:
+                        agent.memory.record(i_memory, self.tick_count, 8.0)
+                    if t_memory:
+                        target.memory.record(t_memory, self.tick_count, 8.0)
+
+                    decisions[id(agent)] = {"action": "rest"}
+                    continue
+
+                # Empty trade items — fall through and treat as ignored message
+                reply: str | None = None
+            elif (
                 reply_dict.get("action") == "interact"
                 and reply_dict.get("target") == agent.name
                 and reply_dict.get("message")
             ):
-                reply: str | None = str(reply_dict["message"]).strip() or None
+                reply = str(reply_dict["message"]).strip() or None
             else:
                 reply = None
 
